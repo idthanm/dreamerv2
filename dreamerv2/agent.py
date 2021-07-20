@@ -19,7 +19,7 @@ class Agent(common.Module):
     with tf.device('cpu:0'):
       self.step = tf.Variable(int(self._counter), tf.int64)
     self._dataset = dataset
-    self.wm = WorldModel(self.step, config)
+    self.wm = EnvModel(self.step, config)
     self._task_behavior = ActorCritic(config, self.step, self._num_act)
     reward = lambda f, s, a: self.wm.heads['reward'](f).mode()
     self._expl_behavior = dict(
@@ -33,7 +33,7 @@ class Agent(common.Module):
     # Train step to initialize variables including optimizer statistics.
     self.train(next(self._dataset))
 
-  @tf.function
+  # @tf.function
   def policy(self, obs, state=None, mode='train'):
     tf.py_function(lambda: self.step.assign(
         int(self._counter), read_value=False), [], [])
@@ -64,7 +64,7 @@ class Agent(common.Module):
     state = (latent, action)
     return outputs, state
 
-  @tf.function
+  # @tf.function
   def train(self, data, state=None):
     metrics = {}
     state, outputs, mets = self.wm.train(data, state)
@@ -82,21 +82,19 @@ class Agent(common.Module):
       metrics.update({'expl_' + key: value for key, value in mets.items()})
     return state, metrics
 
-  @tf.function
+  # @tf.function
   def report(self, data):
     return {'openl': self.wm.video_pred(data)}
 
 
-class WorldModel(common.Module):
+class EnvModel(common.Module):
 
   def __init__(self, step, config):
     self.step = step
     self.config = config
-    self.rssm = common.RSSM(**config.rssm)
+    self.rssm = common.SeqModel(**config.rssm)
     self.heads = {}
-    shape = config.image_size + (1 if config.grayscale else 3,)
     self.encoder = common.ConvEncoder(**config.encoder)
-    self.heads['image'] = common.ConvDecoder(shape, **config.decoder)
     self.heads['reward'] = common.MLP([], **config.reward_head)
     if config.pred_discount:
       self.heads['discount'] = common.MLP([], **config.discount_head)
@@ -111,10 +109,20 @@ class WorldModel(common.Module):
     metrics.update(self.model_opt(model_tape, model_loss, modules))
     return state, outputs, metrics
 
+  def encode(self, data):
+    _keys = ['position', 'velocity']  # todo: only for cartpole in dm control
+    dtype = prec.global_policy().compute_dtype
+    features = []
+    for key in self._keys:
+      value = tf.convert_to_tensor(data[key])
+      value = tf.cast(value, dtype)
+      features.append(value)
+    return tf.concat(features, -1)
+
   def loss(self, data, state=None):
     data = self.preprocess(data)
-    embed = self.encoder(data)
-    post, prior = self.rssm.observe(embed, data['action'], state)
+    obs = self.encode(data)
+    post, prior = self.rssm.observe(obs, data['action'], state)
     kl_loss, kl_value = self.rssm.kl_loss(post, prior, **self.config.kl)
     assert len(kl_loss.shape) == 0
     likes = {}
@@ -158,17 +166,17 @@ class WorldModel(common.Module):
       discount = self.config.discount * tf.ones_like(feats[..., 0])
     return feats, states, actions, discount
 
-  @tf.function
+  # @tf.function
   def preprocess(self, obs):
     dtype = prec.global_policy().compute_dtype
     obs = obs.copy()
-    obs['image'] = tf.cast(obs['image'], dtype) / 255.0 - 0.5
+    # obs['obs'] = tf.cast(obs['image'], dtype) / 255.0 - 0.5  Todo: add observation scale
     obs['reward'] = getattr(tf, self.config.clip_rewards)(obs['reward'])
     if 'discount' in obs:
       obs['discount'] *= self.config.discount
     return obs
 
-  @tf.function
+  # @tf.function
   def video_pred(self, data):
     data = self.preprocess(data)
     truth = data['image'][:6] + 0.5

@@ -35,7 +35,7 @@ parsed, remaining = elements.FlagParser(configs=['defaults']).parse_known(
     exit_on_help=False)
 for name in parsed.configs:
   config = config.update(configs[name])
-config = elements.FlagParser(config).parse(remaining)
+# config = elements.FlagParser(config).parse(remaining)
 logdir = pathlib.Path(config.logdir).expanduser()
 config = config.update(
     steps=config.steps // config.action_repeat,
@@ -45,8 +45,8 @@ config = config.update(
     prefill=config.prefill // config.action_repeat)
 
 tf.config.experimental_run_functions_eagerly(not config.jit)
-message = 'No GPU found. To actually train on CPU remove this assert.'
-assert tf.config.experimental.list_physical_devices('GPU'), message
+# message = 'No GPU found. To actually train on CPU remove this assert.'
+# assert tf.config.experimental.list_physical_devices('GPU'), message
 for gpu in tf.config.experimental.list_physical_devices('GPU'):
   tf.config.experimental.set_memory_growth(gpu, True)
 assert config.precision in (16, 32), config.precision
